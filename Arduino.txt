@@ -1,25 +1,31 @@
 #include <Servo.h>
 
-const int servoPinX = 9;
-const int servoPinY = 10;
+// --- ПИНЫ СЕРВОПРИВОДОВ ---
+const int servoPinX = 9;  // Управление поворотом (по горизонтали)
+const int servoPinY = 10; // Управление наклоном (по вертикали)
 
-Servo myServoX;
-Servo myServoY;
+Servo myServoX; // Серво для оси X (MG996R)
+Servo myServoY; // Серво для оси Y (6208MG)
 
-// Для оси X (MG996R)
-const int MIN_ANGLE_X = 10;    // Минимальный угол для X
-const int MAX_ANGLE_X = 170;   // Максимальный угол для X
-const int CENTER_ANGLE_X = 90; // Центральное положение для X
+// --- НАСТРОЙКИ ОСИ X (MG996R) ---
+const int MIN_ANGLE_X = 10;   // Мин. угол (защита от залипания)
+const int MAX_ANGLE_X = 170;  // Макс. угол (защита от залипания)
+const int CENTER_ANGLE_X = 90; // Центральное положение
 
-// Для оси Y (6208MG) - попробуем широкий диапазон
-const int MIN_ANGLE_Y = 0;     // Минимальный угол для Y
-const int MAX_ANGLE_Y = 180;   // Максимальный угол для Y
-const int CENTER_ANGLE_Y = 90; // Центральное положение для Y
+// --- НАСТРОЙКИ ОСИ Y (6208MG) ---
+const int CENTER_ANGLE_Y = 90; // Центр (0° = верх, 180° = низ)
+const int UP_ANGLE_Y = 60;     // 30° вверх от центра (камера смотрит выше)
+const int DOWN_ANGLE_Y = 120;  // 30° вниз от центра (камера смотрит ниже)
 
-// Параметры движения (очень медленные)
-const int MAX_STEP = 1;          // Максимальный шаг за цикл (1 градус)
-const int MOVE_DELAY = 100;      // Задержка между шагами (100 мс = 10 шагов/сек)
+// --- БЕЗОПАСНЫЕ ГРАНИЦЫ (ВАЖНО!) ---
+const int MIN_SAFE_Y = 45;   // Не менее 45° (избегаем повреждения)
+const int MAX_SAFE_Y = 135;  // Не более 135° (избегаем повреждения)
 
+// --- ПАРАМЕТРЫ ДВИЖЕНИЯ ---
+const int MAX_STEP = 1;      // Движение по 1° за раз
+const int MOVE_DELAY = 50;   // Задержка 50 мс (20 шагов/сек)
+
+// --- ТЕКУЩИЕ И ЦЕЛЕВЫЕ УГЛЫ ---
 int currentAngleX = CENTER_ANGLE_X;
 int currentAngleY = CENTER_ANGLE_Y;
 int targetAngleX = CENTER_ANGLE_X;
@@ -30,66 +36,61 @@ void setup() {
   myServoX.attach(servoPinX);
   myServoY.attach(servoPinY);
   
-  // Устанавливаем начальное положение с проверкой
+  // --- ИНИЦИАЛИЗАЦИЯ В БЕЗОПАСНОЕ ПОЛОЖЕНИЕ ---
   currentAngleX = constrain(CENTER_ANGLE_X, MIN_ANGLE_X, MAX_ANGLE_X);
-  currentAngleY = constrain(CENTER_ANGLE_Y, MIN_ANGLE_Y, MAX_ANGLE_Y);
+  currentAngleY = constrain(CENTER_ANGLE_Y, MIN_SAFE_Y, MAX_SAFE_Y);
   myServoX.write(currentAngleX);
   myServoY.write(currentAngleY);
   
-  Serial.println("Система готова. Проверьте направление движения для оси Y.");
+  // --- ИНФОРМАЦИЯ В СЕРИАЛ ---
+  Serial.println("Система запущена. Новые команды для оси Y:");
+  Serial.println("A = 60° (вверх) | Z = 120° (вниз) | C/B = 90° (центр)");
+  Serial.println("Старые команды U/D также работают (совместимость)");
 }
 
 void loop() {
-  // Проверяем команды от ПК
+  // --- ПРИЁМ КОМАНД С ПК ---
   if (Serial.available() > 0) {
     char command = Serial.read();
     
     switch (command) {
-      case 'L': targetAngleX = MIN_ANGLE_X; break;
-      case 'R': targetAngleX = MAX_ANGLE_X; break;
-      case 'U': 
-        // Попробуем оба варианта направления
-        // Если не работает, поменяйте местами MIN_ANGLE_Y и MAX_ANGLE_Y
-        targetAngleY = MAX_ANGLE_Y; 
-        break;
-      case 'D': 
-        targetAngleY = MIN_ANGLE_Y; 
-        break;
-      case 'C': 
-        targetAngleX = CENTER_ANGLE_X; 
-        targetAngleY = CENTER_ANGLE_Y; 
-        break;
-      case 'B': // Возврат в центр
-        targetAngleX = CENTER_ANGLE_X; 
-        targetAngleY = CENTER_ANGLE_Y; 
+      // --- УПРАВЛЕНИЕ ПО ГОРИЗОНТАЛИ (X) ---
+      case 'L': targetAngleX = MIN_ANGLE_X; break; // Влево (край)
+      case 'R': targetAngleX = MAX_ANGLE_X; break; // Вправо (край)
+      
+      // --- УПРАВЛЕНИЕ ПО ВЕРТИКАЛИ (Y) ---
+      case 'A': targetAngleY = UP_ANGLE_Y; break;   // 60° (30° вверх)
+      case 'Z': targetAngleY = DOWN_ANGLE_Y; break; // 120° (30° вниз)
+      
+      // --- СТАРЫЕ КОМАНДЫ (для совместимости) ---
+      case 'U': targetAngleY = UP_ANGLE_Y; break;   // Теперь = A
+      case 'D': targetAngleY = DOWN_ANGLE_Y; break; // Теперь = Z
+      
+      // --- ВОЗВРАТ В ЦЕНТР ---
+      case 'C':
+      case 'B': 
+        targetAngleX = CENTER_ANGLE_X;
+        targetAngleY = CENTER_ANGLE_Y;
         break;
     }
   }
 
-  // Медленное движение по оси X
-  if (abs(currentAngleX - targetAngleX) > 1) {
-    if (currentAngleX < targetAngleX) {
-      currentAngleX = min(currentAngleX + MAX_STEP, targetAngleX);
-    } else {
-      currentAngleX = max(currentAngleX - MAX_STEP, targetAngleX);
-    }
-    // Обязательная проверка на безопасные значения
+  // --- ПЛАВНОЕ ДВИЖЕНИЕ ПО ОСИ X ---
+  if (abs(currentAngleX - targetAngleX) > 0) {
+    // Вычисляем направление движения
+    currentAngleX += (currentAngleX < targetAngleX) ? MAX_STEP : -MAX_STEP;
+    // Приводим к безопасному диапазону
     currentAngleX = constrain(currentAngleX, MIN_ANGLE_X, MAX_ANGLE_X);
     myServoX.write(currentAngleX);
   }
 
-  // Медленное движение по оси Y
-  if (abs(currentAngleY - targetAngleY) > 1) {
-    if (currentAngleY < targetAngleY) {
-      currentAngleY = min(currentAngleY + MAX_STEP, targetAngleY);
-    } else {
-      currentAngleY = max(currentAngleY - MAX_STEP, targetAngleY);
-    }
-    // Обязательная проверка на безопасные значения
-    currentAngleY = constrain(currentAngleY, MIN_ANGLE_Y, MAX_ANGLE_Y);
+  // --- ПЛАВНОЕ ДВИЖЕНИЕ ПО ОСИ Y ---
+  if (abs(currentAngleY - targetAngleY) > 0) {
+    currentAngleY += (currentAngleY < targetAngleY) ? MAX_STEP : -MAX_STEP;
+    currentAngleY = constrain(currentAngleY, MIN_SAFE_Y, MAX_SAFE_Y);
     myServoY.write(currentAngleY);
   }
 
-  // Добавляем задержку для плавности (100 мс = 10 шагов/сек)
+  // --- ЗАДЕРЖКА ДЛЯ УСТОЙЧИВОСТИ ---
   delay(MOVE_DELAY);
 }
